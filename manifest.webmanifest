@@ -1,12 +1,1 @@
-{
-  "name": "Ponte 2 Colonne — C3.5S (v4)",
-  "short_name": "C3.5S v4",
-  "start_url": "./?source=pwa",
-  "display": "standalone",
-  "background_color": "#0b1022",
-  "theme_color": "#0f172a",
-  "icons": [
-    {"src":"./icons/icon-192.png","sizes":"192x192","type":"image/png"},
-    {"src":"./icons/icon-512.png","sizes":"512x512","type":"image/png"}
-  ]
-}
+{"name": "Ponte 2 Colonne \u2014 C3.5S (v4)", "short_name": "C3.5S v4", "start_url": "./?source=pwa", "display": "standalone", "background_color": "#0b1022", "theme_color": "#0f172a", "icons": [{"src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png"}, {"src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png"}]}
