@@ -1,6 +1,5 @@
-/* app.js — v4.2
- * CASCOS PWA: ricerca+autofill + verifiche + viewer 3D robusto (HiDPI)
- * Note: se usi un service worker, ricorda di bumpare la cache in sw.js.
+/* app.js — v4.3
+ * CASCOS PWA: ricerca+autofill + verifiche + viewer 3D robusto (HiDPI, fit-to-view, ombre/riflessi)
  */
 
 "use strict";
@@ -143,9 +142,9 @@ function runChecks() {
 }
 
 // ---------------------- VIEWER 3D ----------------------
-let C, X, viewSel, hLift, armLen, armRot;
+let C, X;
 
-// Setup DPR: coord in px CSS
+// HiDPI safe: coord in px CSS
 function setupCanvas() {
   if (!C || !X) return;
   const dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -160,28 +159,15 @@ function setupCanvas() {
   }
 }
 
-// Proiezione centrata dinamica
-function proj(p, mode = "iso") {
-  const w = C ? C.clientWidth : 720;
-  const h = C ? C.clientHeight : 360;
-  const cx = w / 2;
-  const cy = h / 2;
-  const s = Math.min(w, h) / 700; // zoom “comodo”
-  if (mode === "top") return { x: p.x * s + cx, y: p.z * s + cy * 0.65 };
-  if (mode === "front") return { x: p.x * s + cx, y: p.y * s + cy };
-  const ang = Math.PI / 6; // 30°
-  const x = (p.x - p.z) * Math.cos(ang);
-  const y = p.y + (p.x + p.z) * Math.sin(ang);
-  return { x: x * s + cx, y: y * s + cy };
-}
-
+// Helper: path faccia
 function facePath(P, idx) {
   X.beginPath();
   idx.forEach((i, k) => (k ? X.lineTo(P[i].x, P[i].y) : X.moveTo(P[i].x, P[i].y)));
   X.closePath();
 }
 
-function box(x, y, z, w, h, d, color, mode) {
+// Disegna un parallelepipedo stilizzato (usa proiezione locale P() dentro render)
+function boxP(P, x, y, z, w, h, d, color) {
   const pts = [
     { x: x, y: y, z: z },
     { x: x + w, y: y, z: z },
@@ -191,7 +177,7 @@ function box(x, y, z, w, h, d, color, mode) {
     { x: x + w, y: y, z: z + d },
     { x: x + w, y: y + h, z: z + d },
     { x: x, y: y + h, z: z + d }
-  ].map((p) => proj(p, mode));
+  ].map(P);
 
   [["#0e1533", [3, 2, 6, 7]], ["#0d1430", [1, 2, 6, 5]], [color, [0, 1, 2, 3]]].forEach(
     ([c, idx]) => {
@@ -205,77 +191,129 @@ function box(x, y, z, w, h, d, color, mode) {
   );
 }
 
-function line3d(x1, y1, z1, x2, y2, z2, c, w, mode) {
-  const p1 = proj({ x: x1, y: y1, z: z1 }, mode);
-  const p2 = proj({ x: x2, y: y2, z: z2 }, mode);
-  X.strokeStyle = c;
-  X.lineWidth = w;
-  X.beginPath();
-  X.moveTo(p1.x, p1.y);
-  X.lineTo(p2.x, p2.y);
-  X.stroke();
-}
-
-function dot3d(x, y, z, r, c, mode) {
-  const p = proj({ x, y, z }, mode);
-  X.fillStyle = c;
-  X.beginPath();
-  X.arc(p.x, p.y, r, 0, Math.PI * 2);
-  X.fill();
-}
-
 function render3D() {
-  if (!C || !X || !viewSel) return;
-
+  if (!C || !X) return;
   setupCanvas();
 
-  const mode = viewSel.value || "iso";
-  const H = hLift ? +hLift.value : 600;
-  const L = armLen ? +armLen.value : 900;
-  const A = ((armRot ? +armRot.value : 20) * Math.PI) / 180;
+  // Leggi controlli direttamente (no globali)
+  const mode = (document.getElementById("viewMode")?.value) || "iso";
+  const H    = +(document.getElementById("hLift")?.value ?? 600);
+  const L    = +(document.getElementById("armLen")?.value ?? 900);
+  const A    = (((document.getElementById("armRot")?.value) ?? 20) * Math.PI) / 180;
 
-  // pulizia in px CSS grazie a setTransform
-  X.clearRect(0, 0, C.clientWidth || 720, C.clientHeight || 360);
-
-  // dimensioni principali (mm)
+  // Misure principali (mm)
   const inter = MODEL.interasse;
-  const colW = (MODEL.widthTotal - inter) / 2;
+  const colW  = (MODEL.widthTotal - inter) / 2;
   const baseD = MODEL.baseDepth;
-  const colH = 4250;
-  const y0 = 0;
-  const z = 0;
-  const leftX = -inter / 2 - colW;
-  const rightX = inter / 2;
+  const colH  = 4250;
 
-  // Pavimento
-  box(-3500, y0, -2000, 7000, 20, 4000, "#0f1733", mode);
+  // Fit-to-view: calcolo scala/centro per il canvas attuale
+  const w = C.clientWidth || 380;
+  const h = C.clientHeight || 360;
+  const Wspan = (MODEL.widthTotal || 3350) * 1.35;
+  const Hspan = colH * 1.25;
+  const s  = Math.min(w / Wspan, h / Hspan);
+  const cx = w / 2;
+  const cy = h * 0.82; // più basso per dare “peso” a terra
 
-  // Colonne
-  box(leftX, y0, z, colW, colH, baseD, "#3b82f6", mode);
-  box(rightX, y0, z, colW, colH, baseD, "#3b82f6", mode);
+  // Proiezione locale (top/front/iso, centrata e scalata)
+  function Praw(x, y, z) {
+    if (mode === "top")   return { X: x, Y: z };
+    if (mode === "front") return { X: x, Y: -y };
+    const ang = Math.PI / 6;
+    const xi = (x - z) * Math.cos(ang);
+    const yi = -y + (x + z) * Math.sin(ang);
+    return { X: xi, Y: yi };
+  }
+  function P(pt) {
+    const t = Praw(pt.x, pt.y, pt.z);
+    return { x: cx + t.X * s, y: cy + t.Y * s };
+  }
 
-  // Trave superiore
-  box(leftX + colW, colH - 120, z, inter, 120, baseD, "#2563eb", mode);
+  // Pulizia
+  X.clearRect(0, 0, w, h);
 
-  // Bracci
-  const pivotY = y0 + 200 + H;
-  const pivotZ = z + baseD / 2;
-  const leftPivotX = leftX + colW;
-  const rightPivotX = rightX;
+  // Pavimento + ombra ambiente
+  const floorGrad = X.createLinearGradient(0, h * 0.55, 0, h);
+  floorGrad.addColorStop(0, "#0c1735");
+  floorGrad.addColorStop(1, "#060a18");
+  X.fillStyle = floorGrad;
+  X.fillRect(0, h * 0.55, w, h * 0.45);
 
-  function drawArm(pivotX, sign) {
-    const x1 = pivotX,
-      y1 = pivotY,
-      z1 = pivotZ;
+  // Colonne con riflesso
+  const halfInter = inter / 2;
+  const colBases = [
+    { x: -halfInter - colW, color: "#3b82f6" },
+    { x:  halfInter,        color: "#3b82f6" }
+  ];
+  colBases.forEach(c => {
+    const front = [ P({x:c.x,y:0,z:0}), P({x:c.x+colW,y:0,z:0}), P({x:c.x+colW,y:colH,z:0}), P({x:c.x,y:colH,z:0}) ];
+    const grad = X.createLinearGradient(front[0].x, front[0].y, front[1].x, front[1].y);
+    grad.addColorStop(0.00,"#1d4ed8");
+    grad.addColorStop(0.45,c.color);
+    grad.addColorStop(1.00,"#60a5fa");
+    // rettangolo frontale
+    X.fillStyle = grad;
+    X.strokeStyle = "#0b1022";
+    X.lineWidth = 1;
+    X.beginPath(); front.forEach((pt,i)=> i?X.lineTo(pt.x,pt.y):X.moveTo(pt.x,pt.y)); X.closePath(); X.fill(); X.stroke();
+    // riflesso centrale
+    X.save();
+    X.globalAlpha = 0.2;
+    const midX = (front[0].x + front[1].x) / 2;
+    X.fillStyle = "#ffffff";
+    X.fillRect(midX - 2, front[0].y + 12, 4, (front[2].y - front[1].y) - 24);
+    X.restore();
+  });
+
+  // Trave superiore (portale)
+  const tr = [
+    P({x:-halfInter,      y:colH-120, z:0}),
+    P({x: halfInter+colW, y:colH-120, z:0}),
+    P({x: halfInter+colW, y:colH,     z:0}),
+    P({x:-halfInter,      y:colH,     z:0})
+  ];
+  X.fillStyle = "#2563eb";
+  X.strokeStyle = "#0b1022";
+  X.beginPath(); tr.forEach((pt,i)=> i?X.lineTo(pt.x,pt.y):X.moveTo(pt.x,pt.y)); X.closePath(); X.fill(); X.stroke();
+
+  // Basamenti (vista top/front/iso con box semplificati)
+  boxP(P, -halfInter - colW, 0, 0, colW, 20, baseD, "#0f1733");
+  boxP(P,  halfInter,        0, 0, colW, 20, baseD, "#0f1733");
+
+  // Bracci + ombre al suolo
+  const pivotY = 200 + H;
+  const pivotZ = baseD / 2;
+
+  function drawArm(pivotX, sign){
+    const x1 = pivotX, y1 = pivotY, z1 = pivotZ;
     const x2 = x1 + Math.cos(A * sign) * L;
     const z2 = z1 + Math.sin(A * sign) * L;
-    line3d(x1, y1, z1, x2, y1, z2, "#a78bfa", 5, mode);
-    dot3d(x2, y1, z2, 5, "#22c55e", mode);
+    const a = P({x:x1,y:y1,z:z1}), b = P({x:x2,y:y1,z:z2});
+
+    // braccio
+    X.strokeStyle = "#a78bfa";
+    X.lineWidth = 4;
+    X.beginPath(); X.moveTo(a.x,a.y); X.lineTo(b.x,b.y); X.stroke();
+
+    // tampone
+    X.fillStyle = "#22c55e";
+    X.beginPath(); X.arc(b.x,b.y,5,0,Math.PI*2); X.fill();
+
+    // ombra ellittica “al suolo”
+    const g = P({x:x2, y:0, z:z2});
+    X.save();
+    X.globalAlpha = 0.22;
+    X.fillStyle = "#000";
+    X.beginPath();
+    X.ellipse(g.x, g.y, 12, 4, 0, 0, Math.PI*2);
+    X.fill();
+    X.restore();
   }
-  drawArm(leftPivotX, +1);
-  drawArm(leftPivotX, -1);
-  drawArm(rightPivotX, +1);
-  drawArm(rightPivotX, -1);
+  drawArm(-halfInter, +1);
+  drawArm(-halfInter, -1);
+  drawArm( halfInter + colW, +1);
+  drawArm( halfInter + colW, -1);
 }
 
 // ---------------------- BIND & INIT ----------------------
@@ -307,29 +345,23 @@ function initUIBindings() {
     loadLifts();
   }
 
-  // Viewer 3D controls
+  // Viewer 3D
   C = document.getElementById("iso3d");
   if (!C) return;
-  // se il canvas non ha dimensioni, assegna fallback
-  if (!C.hasAttribute("width")) C.setAttribute("width", "720");
+  if (!C.hasAttribute("width"))  C.setAttribute("width", "720");
   if (!C.hasAttribute("height")) C.setAttribute("height", "360");
-
   X = C.getContext("2d");
-  viewSel = document.getElementById("viewMode");
-  hLift = document.getElementById("hLift");
-  armLen = document.getElementById("armLen");
-  armRot = document.getElementById("armRot");
 
-  ["input", "change"].forEach((ev) => {
-    if (hLift) hLift.addEventListener(ev, render3D);
-    if (armLen) armLen.addEventListener(ev, render3D);
-    if (armRot) armRot.addEventListener(ev, render3D);
-    if (viewSel) viewSel.addEventListener(ev, render3D);
+  // Input -> render
+  ["hLift","armLen","armRot","viewMode"].forEach(id=>{
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener("input", render3D);
+      el.addEventListener("change", render3D);
+    }
   });
 
   window.addEventListener("resize", render3D);
-
-  // primo render quando tutto è pronto
   requestAnimationFrame(render3D);
 }
 
