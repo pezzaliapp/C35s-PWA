@@ -1,0 +1,6 @@
+[
+  {"categoria":"2_colonne","modello":"C3.5s","codice":"13169","portata_kg":3500,"basamento":"senza","altezza_min_mm":"","altezza_max_mm":"1970","interasse_colonne_mm":"2700","larghezza_totale_mm":"3350","alimentazione":"400/230 V","versione":"","note_tecniche":"Senza basamento; elettronico","pdf_source":"CASCOS set2020"},
+  {"categoria":"2_colonne","modello":"C4s","codice":"13194S","portata_kg":4000,"basamento":"senza","altezza_min_mm":"","altezza_max_mm":"1970","alimentazione":"400/230 V","versione":"XL","note_tecniche":"","pdf_source":"CASCOS set2020"},
+  {"categoria":"4_colonne","modello":"C440","codice":"13340","portata_kg":4000,"basamento":"pedane","altezza_min_mm":"135","note_tecniche":"Pedane 4335x500x135 mm","pdf_source":"CASCOS set2020"},
+  {"categoria":"forbice","modello":"EVO IIIR","codice":"13203","portata_kg":3000,"basamento":"incasso_basso","altezza_min_mm":"105","note_tecniche":"Pedane 1485–1950x645x105 mm","pdf_source":"CASCOS set2020"}
+]
