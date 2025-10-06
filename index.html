@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+  <title>Ponte 2 Colonne — C3.5S (PWA v1)</title>
+  <meta name="theme-color" content="#0f172a">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icons/icon-192.png">
+  <style>
+    :root{
+      --bg:#0b1022; --card:#111735; --ink:#f1f4ff; --muted:#9fb0d9;
+      --cta:#22c55e; --line:#1d2a55; --focus:#2dd4bf; --warn:#f59e0b; --bad:#ef4444;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial;
+      color:var(--ink);
+      background:radial-gradient(1200px 600px at 20% -10%,#12204b 0%,transparent 60%) , #0b1022;
+    }
+    header{display:flex;gap:12px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#0b1022d0;backdrop-filter: blur(8px)}
+    header h1{font-size:16px;margin:0}
+    main{max-width:1200px;margin:0 auto;padding:16px;display:grid;grid-template-columns:1fr 380px;gap:16px}
+    .card{background:linear-gradient(180deg,#111735 0%,#0f1733 100%);border:1px solid var(--line);border-radius:14px;padding:16px}
+    h2{margin:0 0 10px 0;font-size:18px}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+    input,select,button,textarea{
+      width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--line);
+      background:#0c1330;color:var(--ink);outline:none;
+    }
+    input:focus,select:focus,textarea:focus{border-color:var(--focus);box-shadow:0 0 0 3px #2dd4bf22}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .muted{color:var(--muted);font-size:13px}
+    .kpi{display:flex;gap:10px;flex-wrap:wrap}
+    .kpi .pill{padding:6px 10px;border:1px solid var(--line);border-radius:999px;font-size:12px;background:#0c1330}
+    .actions{display:flex;gap:10px;margin-top:12px}
+    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+    .footer{opacity:.7;margin-top:6px;font-size:12px}
+    canvas{width:100%;height:520px;background:#0c1330;border-radius:12px;border:1px solid var(--line)}
+    .legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:8px}
+    .chip{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:999px;font-size:12px;background:#0c1330}
+    .color{width:14px;height:14px;border-radius:3px}
+    @media (max-width:1000px){main{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <header>
+    <img src="./icons/icon-192.png" alt="icon" width="28" height="28">
+    <h1>Ponte 2 Colonne — C3.5S (3.5 t) • v1</h1>
+    <span class="muted">PWA offline • configuratore, verifica & pianta in scala</span>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Pianta in scala</h2>
+      <p class="muted">Dati da dépliant: <strong>interasse colonne 2700 mm</strong>, <strong>larghezza totale 3350 mm</strong>, <strong>base 620 mm</strong>, bracci <strong>690–1325 mm</strong>.</p>
+      <div class="row">
+        <div>
+          <label>Scala (mm per pixel)</label>
+          <input id="scale" type="number" step="1" value="10">
+        </div>
+        <div>
+          <label>Larghezza area officina da mostrare (mm)</label>
+          <input id="roomW" type="number" step="50" value="6000">
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>Profondità area officina da mostrare (mm)</label>
+          <input id="roomH" type="number" step="50" value="7000">
+        </div>
+        <div>
+          <label>Posizione ponte (mm da bordo sinistro/superiore)</label>
+          <input id="pos" type="text" value="(1200, 900)">
+        </div>
+      </div>
+      <div class="actions">
+        <button id="draw">Disegna/aggiorna</button>
+        <button id="exportPNG">Esporta PNG</button>
+      </div>
+      <canvas id="plan" width="900" height="520"></canvas>
+      <div class="legend">
+        <span class="chip"><span class="color" style="background:#60a5fa"></span>Colonne</span>
+        <span class="chip"><span class="color" style="background:#a78bfa"></span>Bracci (min–max)</span>
+        <span class="chip"><span class="color" style="background:#22c55e"></span>Interasse 2700</span>
+      </div>
+    </section>
+
+    <aside class="card">
+      <h2>Ponte — C3.5S</h2>
+      <div class="kpi">
+        <span class="pill">Portata 3500 kg</span>
+        <span class="pill">H min 100 mm</span>
+        <span class="pill">H max 1970 mm</span>
+        <span class="pill">Bracci: 690 ↔ 1325 mm</span>
+        <span class="pill">Interasse: 2700 mm</span>
+        <span class="pill">Larghezza tot: 3350 mm</span>
+        <span class="pill">Base: 620 mm</span>
+        <span class="pill">H overall: 4250 mm</span>
+        <span class="pill">H sotto traversa: 4248 mm</span>
+        <span class="pill">Tensione: 400/230 V (3+3 kW)</span>
+      </div>
+      <p class="muted">Modello a 2 colonne senza pedana a terra. Passaggio cavi: a portico (serie) o incassato (opz.).</p>
+
+      <h2 style="margin-top:14px">Verifica rapida</h2>
+      <div class="row">
+        <div>
+          <label>Altezza utile sotto traversa (mm) — da confermare</label>
+          <input id="freeHeight" type="number" min="2000" max="4300" step="1" value="4248">
+        </div>
+        <div>
+          <label>Massa veicolo (kg)</label>
+          <input id="mass" type="number" min="500" max="4500" step="10" value="1800">
+        </div>
+        <div>
+          <label>Altezza min punti presa (mm)</label>
+          <input id="clearance" type="number" min="80" max="400" step="5" value="120">
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>Altezza veicolo (tetto, mm)</label>
+          <input id="vehHeight" type="number" min="1400" max="2200" step="10" value="1750">
+        </div>
+        <div>
+          <label>Sollevamento desiderato (mm)</label>
+          <input id="desiredLift" type="number" min="200" max="1970" step="10" value="1700">
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label>Spessore pavimento (mm)</label>
+          <input id="slab" type="number" min="120" max="400" step="5" value="180">
+        </div>
+        <div>
+          <label>Variante installazione</label>
+          <select id="variant">
+            <option>Senza basamento</option>
+            <option>Con basamento (trave/platea)</option>
+          </select>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="check">Verifica</button>
+      </div>
+      <pre id="out" class="muted" style="white-space:pre-wrap;margin-top:10px"></pre>
+    </aside>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
