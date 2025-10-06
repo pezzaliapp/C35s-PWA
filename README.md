@@ -1,16 +1,8 @@
-# Ponte 2 Colonne — C3.5S (PWA v1)
+# Ponte 2 Colonne — C3.5S (PWA v2)
 
-Aggiornamenti:
-- **Pianta in scala** con i nuovi ingombri: interasse **2700 mm**, larghezza totale **3350 mm**, base **620 mm**.
-- Bracci **690–1325 mm** (tripla sfilata). Export PNG della pianta.
-- Verifica rapida (portata, altezza min, spessore pavimento prudenziale).
-- PWA offline-first.
+Novità:
+- **Modulo ancoranti/pavimento** con stime di trazione/taglio per ancorante e report JSON.
+- **Layout officina drag&drop** (area predefinita 6000×7000 mm), export PNG/JSON, scala regolabile.
+- Verifiche rapide integrate (portata, appoggi, sotto-traversa 4248 mm, spessore slab).
 
-> Dato che non è presente nel dépliant la larghezza colonna, in pianta viene derivata come: (3350−2700)/2 = **325 mm** per lato, ai soli fini grafici.
-
-© 2025 — pezzaliAPP (MIT)
-
-
-### v1.2
-- **H sotto traversa** fissata a **4248 mm**.
-- Aggiunto controllo **clearance sotto traversa**: veicolo (tetto) + sollevamento desiderato + margine 50 mm ≤ H sotto traversa.
+> Le verifiche sono preliminari e non sostituiscono calcoli strutturali e documentazione ETA/EN 1493.
