@@ -1,4 +1,4 @@
-/* app.js — v5.2
+/* app.js — v5.3
  * CASCOS PWA: ricerca + autofill + verifiche + viewer 3D (fit-to-view, HiDPI, bracci specchiati)
  */
 "use strict";
@@ -20,7 +20,7 @@ const MODEL = {
 let LIFTS = [];
 const DATA_URLS = [
   "./data/CASCOS_LIFTS.json", // preferito
-  "./CASCOS_LIFTS.json"       // fallback
+  "./CASCOS_LIFTS.json"       // fallback (root)
 ];
 
 async function loadLifts() {
@@ -31,15 +31,15 @@ async function loadLifts() {
     if (!res.ok) throw new Error(`HTTP ${res.status} @ ${url}`);
     const text = await res.text();
     if (text.trim().startsWith("<")) throw new Error(`Non-JSON @ ${url}`);
-    return JSON.parse(text);
+    const data = JSON.parse(text);
+    if (!Array.isArray(data)) throw new Error("Root non-array");
+    return data;
   }
 
   let lastErr;
   for (const url of DATA_URLS) {
     try {
-      const data = await tryFetch(url);
-      if (!Array.isArray(data)) throw new Error("Root non-array");
-      LIFTS = data;
+      LIFTS = await tryFetch(url);
       populateLiftSelect(LIFTS);
       infoBox && (infoBox.textContent = `✅ Dataset caricato: ${url.replace(/\?.*$/,"")}`);
       return;
@@ -49,7 +49,7 @@ async function loadLifts() {
   infoBox && (infoBox.textContent = "⚠️ CASCOS_LIFTS.json non trovato. Uso dati di prova.");
   LIFTS = [{
     modello: "C3.5", codice: "TEST", categoria: "Prova",
-    portata_kg: 3500, basamento: "Senza basamento",
+    portata_kg: 3500, basamento: "senza",
     interasse_mm: 2700, larghezza_totale_mm: 3350, base_profondita_mm: 620,
     altezza_sotto_traversa_mm: 4248, arm_min_mm: 690, arm_max_mm: 1325
   }];
@@ -109,7 +109,9 @@ const CAPACITY_MAP = [
   { re: /C5(\D|$)/i,     kg: 5000 },
   { re: /C4(\D|$)/i,     kg: 4000 },
   { re: /C3\.5(\D|$)/i,  kg: 3500 },
-  { re: /C3\.2(\D|$)/i,  kg: 3200 }
+  { re: /C3\.2(\D|$)/i,  kg: 3200 },
+  { re: /C3(\D|$)/i,     kg: 3000 },
+  { re: /C2(\D|$)/i,     kg: 2000 }
 ];
 
 function capacityFromModelName(name = "", fallback = MODEL.capacityKg) {
@@ -166,7 +168,7 @@ function applyLiftToChecks(idx) {
   const des = document.getElementById("desiredLift");
   if (des) des.value = Math.min(num(r.altezza_max_mm, MODEL.liftHmax), MODEL.liftHmax);
 
-  // Geometrie
+  // Geometrie (preferisci *_mm; fallback su varianti chiave)
   MODEL.interasse  = num(r.interasse_mm ?? r.interasse ?? r.interasse_colonne_mm, MODEL.interasse);
   MODEL.widthTotal = num(r.larghezza_totale_mm ?? r.larghezza_totale ?? r.width_total_mm, MODEL.widthTotal);
   MODEL.baseDepth  = num(r.base_profondita_mm ?? r.base_profondita ?? r.base_depth_mm, MODEL.baseDepth);
@@ -292,7 +294,7 @@ function render3D() {
     X.fillRect(mid-2, f[0].y+12, 4, (f[2].y-f[1].y)-24); X.restore();
   });
 
-  // Trave
+  // Trave (fix typo moveTo)
   const tr = [
     P({x:-halfInter,      y:colH-120, z:0}),
     P({x: halfInter+colW, y:colH-120, z:0}),
@@ -300,7 +302,7 @@ function render3D() {
     P({x:-halfInter,      y:colH,     z:0})
   ];
   X.fillStyle="#2563eb"; X.strokeStyle="#0b1022";
-  X.beginPath(); tr.forEach((p,i)=> i?X.lineTo(p.x,p.y):X.moveTo(p.x,p,y)); // typo fix
+  X.beginPath(); tr.forEach((p,i)=> i?X.lineTo(p.x,p.y):X.moveTo(p.x,p.y)); 
   X.closePath(); X.fill(); X.stroke();
 
   // Basamenti
