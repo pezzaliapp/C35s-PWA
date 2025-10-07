@@ -1,4 +1,4 @@
-/* app.js — v4.5
+/* app.js — v4.7
  * CASCOS PWA: ricerca+autofill + verifiche + viewer 3D (fit-to-view, ombre, riflessi, bracci specchiati)
  */
 
@@ -37,7 +37,10 @@ function populateLiftSelect(list) {
   (list || []).forEach((r, i) => {
     const opt = document.createElement("option");
     opt.value = i;
-    opt.textContent = `${r.modello} — ${r.codice} — ${r.categoria}`;
+    const codice = (r.codice ?? "null");
+    const cat = (r.categoria ?? "—");
+    const mod = (r.modello ?? "—");
+    opt.textContent = `${mod} — ${codice} — ${cat}`;
     sel.appendChild(opt);
   });
 }
@@ -62,53 +65,102 @@ function showLiftInfo(idx) {
   const box = document.getElementById("liftInfo");
   if (!box) return;
   box.textContent = [
-    `Modello: ${r.modello}  (codice: ${r.codice})`,
-    `Categoria: ${r.categoria} — Basamento: ${r.basamento}`,
-    `Portata: ${r.portata_kg || "—"} kg`,
-    `Versione: ${r.versione || "—"}`,
-    `Note: ${r.note_tecniche || "—"}`,
-    `Fonte: ${r.pdf_source || "—"}`
+    `Modello: ${r.modello ?? "—"}  (codice: ${r.codice ?? "null"})`,
+    `Categoria: ${r.categoria ?? "—"} — Basamento: ${r.basamento ?? "—"}`,
+    `Portata: ${r.portata_kg ?? "—"} kg`,
+    `Versione: ${r.versione ?? "—"}`,
+    `Note: ${r.note_tecniche ?? "—"}`,
+    `Fonte: ${r.pdf_source ?? "—"}`
   ].join("\n");
 }
 
+/* ------------ Helper: numeri & inferenze ------------ */
+const num = (v, fb) => {
+  const n = Number(String(v ?? "").replace(",", "."));
+  return Number.isFinite(n) ? n : fb;
+};
+
+function inferCapacityFromModel(name = "") {
+  const m = String(name).toUpperCase();
+  if (/C7(\D|$)/.test(m))    return 7000;
+  if (/C5\.5(\D|$)/.test(m)) return 5500;
+  if (/C5(\D|$)/.test(m))    return 5000;
+  if (/C4(\D|$)/.test(m))    return 4000;
+  if (/C3\.5(\D|$)/.test(m)) return 3500;
+  if (/C3\.2(\D|$)/.test(m)) return 3200;
+  return null;
+}
+
+function getArmRangeForLift(rec) {
+  const pick = (o, keys) => {
+    for (const k of keys) {
+      if (o && o[k] != null && o[k] !== "") {
+        const v = num(o[k], NaN);
+        if (Number.isFinite(v) && v > 0) return v;
+      }
+    }
+    return null;
+  };
+  const min = pick(rec, ["arm_min_mm","braccio_min_mm","bracci_min_mm","est_min_mm"]) ?? MODEL.armReachMin;
+  const max = pick(rec, ["arm_max_mm","braccio_max_mm","bracci_max_mm","est_max_mm"]) ?? MODEL.armReachMax;
+  return (min < max) ? { min, max } : { min: MODEL.armReachMin, max: MODEL.armReachMax };
+}
+
+function setArmSlider(min, max, keepCurrent = true) {
+  const s = document.getElementById("armLen");
+  if (!s) return;
+  const prev = num(s.value, min);
+  s.min = String(min);
+  s.max = String(max);
+  s.value = String(keepCurrent ? Math.min(Math.max(prev, min), max) : min);
+  s.title = `Estensione bracci: ${s.value} mm (min ${min} – max ${max})`;
+}
+
+/* ------------ Applica modello ai controlli + viewer ------------ */
 function applyLiftToChecks(idx) {
   const search = document.getElementById("liftSearch");
   const list = filterLifts(search ? search.value : "");
   const r = list[idx] || LIFTS[idx];
   if (!r) return;
 
-  if (r.portata_kg) {
-    MODEL.capacityKg = Number(r.portata_kg);
-    const cap = document.getElementById("cap");
-    if (cap) cap.textContent = MODEL.capacityKg;
-  }
+  // 1) Portata: JSON → fallback dal nome → default
+  const inferred = inferCapacityFromModel(r.modello);
+  const cap = num(r.portata_kg, inferred ?? MODEL.capacityKg);
+  MODEL.capacityKg = cap;
+  document.getElementById("cap")?.textContent = cap;
 
+  // 2) Variante installazione
   const variant = document.getElementById("variant");
   if (r.basamento && variant) {
-    const b = r.basamento.toLowerCase();
-    if (b.includes("senza")) variant.value = "Senza basamento";
-    else if (b.includes("con")) variant.value = "Con basamento (trave/platea)";
+    const b = String(r.basamento).toLowerCase();
+    variant.value = b.includes("senza")
+      ? "Senza basamento"
+      : "Con basamento (trave/platea)";
   }
 
+  // 3) Limiti min/max altezze (clamp)
   const clear = document.getElementById("clearance");
-  if (r.altezza_min_mm && clear) clear.value = Math.max(+r.altezza_min_mm, 100);
-
+  if (r.altezza_min_mm && clear) clear.value = Math.max(num(r.altezza_min_mm, 100), 80);
   const des = document.getElementById("desiredLift");
-  if (r.altezza_max_mm && des)
-    des.value = Math.min(+r.altezza_max_mm, MODEL.liftHmax);
+  if (r.altezza_max_mm && des) des.value = Math.min(num(r.altezza_max_mm, MODEL.liftHmax), MODEL.liftHmax);
 
-  // Range bracci dinamico dal JSON (se disponibile)
-  const armLen = document.getElementById("armLen");
-  if (armLen && r.arm_min_mm && r.arm_max_mm) {
-    MODEL.armReachMin = +r.arm_min_mm;
-    MODEL.armReachMax = +r.arm_max_mm;
-    armLen.min = MODEL.armReachMin;
-    armLen.max = MODEL.armReachMax;
-  }
+  // 4) Geometrie (se presenti)
+  MODEL.interasse   = num(r.interasse ?? r.interasse_colonne_mm, MODEL.interasse);
+  MODEL.widthTotal  = num(r.larghezza_totale ?? r.larghezza_totale_mm, MODEL.widthTotal);
+  MODEL.baseDepth   = num(r.base_profondita, MODEL.baseDepth);
+  MODEL.underBeam   = num(r.altezza_sotto_traversa, MODEL.underBeam);
 
-  const info = document.getElementById("liftInfo");
-  if (info)
-    info.textContent = `Applicato modello: ${r.modello} (${r.codice}) — portata impostata: ${MODEL.capacityKg} kg`;
+  // 5) Range bracci dinamico
+  const { min, max } = getArmRangeForLift(r);
+  setArmSlider(min, max, true);
+
+  // 6) Info
+  document.getElementById("liftInfo").textContent =
+    `Applicato modello: ${r.modello ?? "—"} (${r.codice ?? "null"}) — portata impostata: ${MODEL.capacityKg} kg`;
+
+  // 7) Aggiorna subito UI
+  render3D();
+  runChecks();
 }
 
 // ---------------------- VERIFICHE ----------------------
@@ -204,7 +256,9 @@ function render3D() {
 
   const mode = (document.getElementById("viewMode")?.value) || "iso";
   const H = +(document.getElementById("hLift")?.value ?? 600);
-  const L = +(document.getElementById("armLen")?.value ?? MODEL.armReachMin);
+  const sArm = document.getElementById("armLen");
+  const Lraw = +(sArm?.value ?? MODEL.armReachMin);
+  const L = Math.min(Math.max(Lraw, +(sArm?.min ?? MODEL.armReachMin)), +(sArm?.max ?? MODEL.armReachMax));
   const Adeg = +(document.getElementById("armRot")?.value ?? 20);
   const A = (Adeg * Math.PI) / 180;
 
@@ -213,9 +267,12 @@ function render3D() {
   const baseD = MODEL.baseDepth;
   const colH = 4250;
 
+  // Fit-to-view dinamico (usa misure reali)
   const w = C.clientWidth || 380;
   const h = C.clientHeight || 360;
-  const s = Math.min(w / 4800, h / 4800);
+  const Wspan = (MODEL.widthTotal || 3350) * 1.28;
+  const Hspan = colH * 1.18;
+  const s = Math.min(w / Wspan, h / Hspan);
   const cx = w / 2;
   const cy = h * 0.82;
 
@@ -245,7 +302,7 @@ function render3D() {
   const halfInter = inter / 2;
   const colBases = [
     { x: -halfInter - colW, color: "#3b82f6" },
-    { x: +halfInter, color: "#3b82f6" }
+    { x: +halfInter,        color: "#3b82f6" }
   ];
   colBases.forEach(c => {
     const front = [P({x:c.x,y:0,z:0}), P({x:c.x+colW,y:0,z:0}), P({x:c.x+colW,y:colH,z:0}), P({x:c.x,y:colH,z:0})];
@@ -256,14 +313,22 @@ function render3D() {
     X.fillStyle = grad;
     X.strokeStyle = "#0b1022";
     X.beginPath(); front.forEach((pt,i)=> i?X.lineTo(pt.x,pt.y):X.moveTo(pt.x,pt.y)); X.closePath(); X.fill(); X.stroke();
+
+    // piccolo riflesso verticale
+    X.save();
+    X.globalAlpha = 0.20;
+    const mid = (front[0].x + front[1].x) / 2;
+    X.fillStyle = "#ffffff";
+    X.fillRect(mid - 2, front[0].y + 12, 4, (front[2].y - front[1].y) - 24);
+    X.restore();
   });
 
   // Trave superiore
   const tr = [
-    P({x:-halfInter, y:colH-120, z:0}),
+    P({x:-halfInter,      y:colH-120, z:0}),
     P({x: halfInter+colW, y:colH-120, z:0}),
-    P({x: halfInter+colW, y:colH, z:0}),
-    P({x:-halfInter, y:colH, z:0})
+    P({x: halfInter+colW, y:colH,     z:0}),
+    P({x:-halfInter,      y:colH,     z:0})
   ];
   X.fillStyle = "#2563eb";
   X.strokeStyle = "#0b1022";
@@ -271,19 +336,18 @@ function render3D() {
 
   // Basamenti
   boxP(P, -halfInter - colW, 0, 0, colW, 20, baseD, "#0f1733");
-  boxP(P,  halfInter, 0, 0, colW, 20, baseD, "#0f1733");
+  boxP(P,  halfInter,        0, 0, colW, 20, baseD, "#0f1733");
 
-  // ----------- Bracci specchiati -----------
+  // ----------- Bracci specchiati (pivot interni) -----------
   const pivotY = 200 + H;
   const pivotZ = baseD / 2;
 
   function drawArm(pivotX, sign, isRight){
-    const x1 = pivotX, y1 = pivotY, z1 = pivotZ;
-
-    // direzione base verso l’interno
+    // direzione base verso l’interno: dx = π, sx = 0
     const baseAngle = isRight ? Math.PI : 0;
     const angle = baseAngle + sign * A;
 
+    const x1 = pivotX, y1 = pivotY, z1 = pivotZ;
     const x2 = x1 + Math.cos(angle) * L;
     const z2 = z1 + Math.sin(angle) * L;
 
@@ -294,20 +358,22 @@ function render3D() {
     X.lineWidth = 5;
     X.beginPath(); X.moveTo(a.x,a.y); X.lineTo(b.x,b.y); X.stroke();
 
-    // tampone verde (verso interno)
+    // tampone verde (sempre interno)
     X.fillStyle = "#22c55e";
     X.beginPath(); X.arc(b.x,b.y,6,0,Math.PI*2); X.fill();
 
-    // ombra
+    // ombra al suolo
     const g = P({x:x2,y:0,z:z2});
     X.save(); X.globalAlpha = 0.22; X.fillStyle = "#000";
-    X.beginPath(); X.ellipse(g.x,g.y,12,4,0,0,Math.PI*2); X.fill(); X.restore();
+    X.beginPath(); X.ellipse(g.x,g.y,12,4,0,0,Math.PI*2); X.fill();
+    X.restore();
   }
 
+  // pivot interni: SX = -halfInter, DX = +halfInter (⚠️ NON +colW)
   drawArm(-halfInter, +1, false);
   drawArm(-halfInter, -1, false);
-  drawArm(+halfInter+colW, +1, true);
-  drawArm(+halfInter+colW, -1, true);
+  drawArm(+halfInter, +1, true);
+  drawArm(+halfInter, -1, true);
 }
 
 // ---------------------- INIT ----------------------
@@ -330,6 +396,9 @@ function initUIBindings() {
   if (!C.hasAttribute("width")) C.setAttribute("width", "720");
   if (!C.hasAttribute("height")) C.setAttribute("height", "360");
   X = C.getContext("2d");
+
+  // range default (se ancora non applicato un modello)
+  setArmSlider(MODEL.armReachMin, MODEL.armReachMax, false);
 
   ["hLift","armLen","armRot","viewMode"].forEach(id=>{
     const el=document.getElementById(id);
