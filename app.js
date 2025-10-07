@@ -1,13 +1,10 @@
-/* app.js — v4.9 (stable)
- * CASCOS PWA: ricerca + autofill + verifiche + viewer 3D completo
- * - Caricamento JSON robusto (fallback path, messaggi chiari)
- * - Fit-to-view, HiDPI, ombre & riflessi
- * - Bracci specchiati e range dinamico da JSON
+/* app.js — v5.0 stable
+ * CASCOS PWA: ricerca + autofill + verifiche + viewer 3D (fit-to-view, HiDPI, bracci specchiati)
  */
 
 "use strict";
 
-/* ---------------------- MODEL ---------------------- */
+/* ===================== MODEL (default) ===================== */
 const MODEL = {
   capacityKg: 3500,
   liftHmin: 100,
@@ -17,34 +14,32 @@ const MODEL = {
   widthTotal: 3350,
   baseDepth: 620,
   armReachMin: 690,
-  armReachMax: 1325,
+  armReachMax: 1325
 };
 
-/* ---------------------- DATASET ---------------------- */
+/* ===================== DATASET ===================== */
 let LIFTS = [];
+
 async function loadLifts() {
   const infoBox = document.getElementById("liftInfo");
   const tryFetch = async (url) => {
     const r = await fetch(url, { cache: "reload" });
     if (!r.ok) throw new Error(`HTTP ${r.status} @ ${url}`);
-    const txt = await r.text();       // intercetta HTML di errore
-    if (txt.trim().startsWith("<")) throw new Error(`Non è JSON @ ${url}`);
+    const txt = await r.text();
+    if (txt.trim().startsWith("<")) throw new Error(`Non-JSON @ ${url}`);
     return JSON.parse(txt);
   };
 
   try {
-    // prova percorso standard /data/
     LIFTS = await tryFetch("./data/CASCOS_LIFTS.json");
     infoBox && (infoBox.textContent = "✅ Dataset CASCOS caricato.");
   } catch (e1) {
     try {
-      // fallback: stesso livello dell’index.html
       LIFTS = await tryFetch("./CASCOS_LIFTS.json");
       infoBox && (infoBox.textContent = "ℹ️ Dataset caricato (fallback).");
     } catch (e2) {
       console.warn("Dataset non disponibile:", e1, e2);
       infoBox && (infoBox.textContent = "⚠️ Dataset non trovato: uso dati di prova.");
-      // fallback minimo per non bloccare l’app
       LIFTS = [
         { modello:"C3.5", codice:"TEST", categoria:"Prova",
           portata_kg:3500, basamento:"Senza basamento",
@@ -57,7 +52,7 @@ async function loadLifts() {
   populateLiftSelect(LIFTS);
 }
 
-/* ---------------------- UI LISTA MODELLI ---------------------- */
+/* ===================== LISTA / FILTRO ===================== */
 function populateLiftSelect(list) {
   const sel = document.getElementById("liftSelect");
   if (!sel) return;
@@ -98,28 +93,32 @@ function showLiftInfo(idx) {
   ].join("\n");
 }
 
-/* ---------------------- HELPER ---------------------- */
+/* ===================== Helper numerici & portate ===================== */
 const num = (v, fb) => {
   const n = Number(String(v ?? "").replace(",", "."));
-  return Number.isFinite(n) ? n : fb;
+  return Number.isFinite(n) && n > 0 ? n : fb;
 };
-function inferCapacityFromModel(name = "") {
-  const m = String(name).toUpperCase();
-  if (/C7(\D|$)/.test(m)) return 7000;
-  if (/C5\.5(\D|$)/.test(m)) return 5500;
-  if (/C5(\D|$)/.test(m)) return 5000;
-  if (/C4(\D|$)/.test(m)) return 4000;
-  if (/C3\.5(\D|$)/.test(m)) return 3500;
-  if (/C3\.2(\D|$)/.test(m)) return 3200;
-  return null;
+
+const CAPACITY_MAP = [
+  { re: /C7(\D|$)/i,     kg: 7000 },
+  { re: /C5\.5(\D|$)/i,  kg: 5500 },
+  { re: /C5(\D|$)/i,     kg: 5000 },
+  { re: /C4(\D|$)/i,     kg: 4000 },
+  { re: /C3\.5(\D|$)/i,  kg: 3500 },
+  { re: /C3\.2(\D|$)/i,  kg: 3200 }
+];
+
+function capacityFromModelName(name = "", fallback = MODEL.capacityKg) {
+  const m = String(name || "");
+  for (const { re, kg } of CAPACITY_MAP) if (re.test(m)) return kg;
+  return fallback;
 }
+
 function getArmRangeForLift(rec) {
   const pick = (o, keys) => {
     for (const k of keys) {
-      if (o && o[k] != null && o[k] !== "") {
-        const v = num(o[k], NaN);
-        if (Number.isFinite(v) && v > 0) return v;
-      }
+      const v = num(o?.[k], NaN);
+      if (Number.isFinite(v)) return v;
     }
     return null;
   };
@@ -127,6 +126,7 @@ function getArmRangeForLift(rec) {
   const max = pick(rec, ["arm_max_mm","braccio_max_mm","bracci_max_mm","est_max_mm"]) ?? MODEL.armReachMax;
   return (min < max) ? { min, max } : { min: MODEL.armReachMin, max: MODEL.armReachMax };
 }
+
 function setArmSlider(min, max, keepCurrent = true) {
   const s = document.getElementById("armLen");
   if (!s) return;
@@ -137,51 +137,50 @@ function setArmSlider(min, max, keepCurrent = true) {
   s.title = `Estensione bracci: ${s.value} mm (min ${min} – max ${max})`;
 }
 
-/* ---------------------- APPLICA MODELLO ---------------------- */
+/* ===================== Applica modello ai controlli + viewer ===================== */
 function applyLiftToChecks(idx) {
   const search = document.getElementById("liftSearch");
   const list = filterLifts(search ? search.value : "");
   const r = list[idx] || LIFTS[idx];
   if (!r) return;
 
-  // Portata
-  const inferred = inferCapacityFromModel(r.modello);
-  MODEL.capacityKg = num(r.portata_kg, inferred ?? MODEL.capacityKg);
-  const capEl = document.getElementById("cap");
-  if (capEl) capEl.textContent = MODEL.capacityKg;
+  // Portata: JSON → dedotta → default
+  const cap = num(r.portata_kg, capacityFromModelName(r.modello, MODEL.capacityKg));
+  MODEL.capacityKg = cap;
+  document.getElementById("cap")?.textContent = cap;
 
   // Variante installazione
   const variant = document.getElementById("variant");
-  if (r.basamento && variant) {
-    const b = String(r.basamento).toLowerCase();
+  if (variant) {
+    const b = String(r.basamento || "").toLowerCase();
     variant.value = b.includes("senza") ? "Senza basamento" : "Con basamento (trave/platea)";
   }
 
-  // Limiti quote
+  // Quote min/max altezze
   const clear = document.getElementById("clearance");
-  if (r.altezza_min_mm && clear) clear.value = Math.max(num(r.altezza_min_mm, 100), 80);
+  if (clear) clear.value = num(r.altezza_min_mm, MODEL.liftHmin);
   const des = document.getElementById("desiredLift");
-  if (r.altezza_max_mm && des) des.value = Math.min(num(r.altezza_max_mm, MODEL.liftHmax), MODEL.liftHmax);
+  if (des) des.value = Math.min(num(r.altezza_max_mm, MODEL.liftHmax), MODEL.liftHmax);
 
   // Geometrie
   MODEL.interasse  = num(r.interasse ?? r.interasse_mm ?? r.interasse_colonne_mm, MODEL.interasse);
   MODEL.widthTotal = num(r.larghezza_totale ?? r.width_total_mm ?? r.larghezza_totale_mm, MODEL.widthTotal);
-  MODEL.baseDepth  = num(r.base_profondita ?? r.base_depth_mm, MODEL.baseDepth);
-  MODEL.underBeam  = num(r.altezza_sotto_traversa ?? r.under_beam_mm, MODEL.underBeam);
+  MODEL.baseDepth  = num(r.base_profondita ?? r.base_mm ?? r.base_depth_mm, MODEL.baseDepth);
+  MODEL.underBeam  = num(r.altezza_sotto_traversa ?? r.under_beam_mm ?? r.h_sotto_traversa_mm, MODEL.underBeam);
 
-  // Bracci
+  // Range bracci
   const { min, max } = getArmRangeForLift(r);
   setArmSlider(min, max, true);
 
   // Info
   const info = document.getElementById("liftInfo");
-  if (info) info.textContent = `Applicato modello: ${r.modello ?? "—"} (${r.codice ?? "—"}) — ${MODEL.capacityKg} kg`;
+  if (info) info.textContent = `Applicato modello: ${r.modello ?? "—"} (${r.codice ?? "—"}) — portata impostata: ${MODEL.capacityKg} kg`;
 
   render3D();
   runChecks();
 }
 
-/* ---------------------- VERIFICHE ---------------------- */
+/* ===================== Verifiche ===================== */
 function runChecks() {
   const mass = +document.getElementById("mass").value;
   const clearance = +document.getElementById("clearance").value;
@@ -210,10 +209,9 @@ function runChecks() {
   document.getElementById("out").textContent = out.join("\n");
 }
 
-/* ---------------------- VIEWER 3D ---------------------- */
+/* ===================== Viewer 3D ===================== */
 let C, X;
 
-// HiDPI + dimensioni reali del canvas dalla box
 function setupCanvas() {
   if (!C || !X) return;
   const dpr = Math.max(1, window.devicePixelRatio || 1);
@@ -225,7 +223,7 @@ function setupCanvas() {
   if (C.width !== needW || C.height !== needH) {
     C.width = needW;
     C.height = needH;
-    X.setTransform(dpr, 0, 0, dpr, 0, 0); // coordinate in px CSS
+    X.setTransform(dpr, 0, 0, dpr, 0, 0); // disegno in px CSS
   }
 }
 
@@ -233,8 +231,7 @@ function render3D() {
   if (!C || !X) return;
   setupCanvas();
 
-  const viewSel = document.getElementById("viewMode");
-  const mode = viewSel ? viewSel.value : "iso";
+  const mode = (document.getElementById("viewMode")?.value) || "iso";
   const H = +(document.getElementById("hLift")?.value ?? 600);
 
   const sArm = document.getElementById("armLen");
@@ -274,7 +271,7 @@ function render3D() {
   floorGrad.addColorStop(0, "#0c1735"); floorGrad.addColorStop(1, "#060a18");
   X.fillStyle = floorGrad; X.fillRect(0, h * 0.55, w, h * 0.45);
 
-  // Colonne
+  // Colonne + riflesso
   const halfInter = inter / 2;
   const cols = [
     { x: -halfInter - colW, color: "#3b82f6" },
@@ -286,12 +283,11 @@ function render3D() {
     g.addColorStop(0,"#1d4ed8"); g.addColorStop(0.45,c.color); g.addColorStop(1,"#60a5fa");
     X.fillStyle=g; X.strokeStyle="#0b1022";
     X.beginPath(); f.forEach((p,i)=> i?X.lineTo(p.x,p.y):X.moveTo(p.x,p.y)); X.closePath(); X.fill(); X.stroke();
-    // riflesso
     X.save(); X.globalAlpha=0.2; const mid=(f[0].x+f[1].x)/2; X.fillStyle="#fff";
     X.fillRect(mid-2, f[0].y+12, 4, (f[2].y-f[1].y)-24); X.restore();
   });
 
-  // Trave superiore
+  // Trave
   const tr = [
     P({x:-halfInter,      y:colH-120, z:0}),
     P({x: halfInter+colW, y:colH-120, z:0}),
@@ -312,21 +308,16 @@ function render3D() {
 
   // Bracci (pivot interni)
   const pivotY = 200 + H, pivotZ = baseD/2;
-
   function drawArm(pivotX, sign, isRight){
-    const baseAngle = isRight ? Math.PI : 0;  // dx verso sinistra
+    const baseAngle = isRight ? Math.PI : 0; // dx verso interno
     const angle = baseAngle + sign * A;
-
     const x1=pivotX, y1=pivotY, z1=pivotZ;
     const x2=x1 + Math.cos(angle)*L;
     const z2=z1 + Math.sin(angle)*L;
-
     const a=P({x:x1,y:y1,z:z1}), b=P({x:x2,y:y1,z:z2});
     X.strokeStyle="#a78bfa"; X.lineWidth=5;
     X.beginPath(); X.moveTo(a.x,a.y); X.lineTo(b.x,b.y); X.stroke();
-
     X.fillStyle="#22c55e"; X.beginPath(); X.arc(b.x,b.y,6,0,Math.PI*2); X.fill();
-
     const g=P({x:x2,y:0,z:z2});
     X.save(); X.globalAlpha=0.22; X.fillStyle="#000";
     X.beginPath(); X.ellipse(g.x,g.y,12,4,0,0,Math.PI*2); X.fill(); X.restore();
@@ -337,13 +328,10 @@ function render3D() {
   drawArm(+halfInter, -1, true);
 }
 
-/* ---------------------- INIT ---------------------- */
+/* ===================== INIT ===================== */
 function initUIBindings() {
-  // Verifiche
-  const runBtn = document.getElementById("runChecks");
-  if (runBtn) runBtn.addEventListener("click", runChecks);
+  document.getElementById("runChecks")?.addEventListener("click", runChecks);
 
-  // Ricerca / dataset
   const liftSearch = document.getElementById("liftSearch");
   const liftSelect = document.getElementById("liftSelect");
   if (liftSearch && liftSelect) {
@@ -354,14 +342,12 @@ function initUIBindings() {
     loadLifts();
   }
 
-  // Viewer 3D
   C = document.getElementById("iso3d");
   if (!C) return;
   if (!C.hasAttribute("width"))  C.setAttribute("width","720");
   if (!C.hasAttribute("height")) C.setAttribute("height","360");
   X = C.getContext("2d");
 
-  // range bracci default
   setArmSlider(MODEL.armReachMin, MODEL.armReachMax, false);
 
   ["hLift","armLen","armRot","viewMode"].forEach(id=>{
@@ -379,7 +365,7 @@ if (document.readyState === "loading") {
   initUIBindings();
 }
 
-/* ---------------------- PWA ---------------------- */
+/* ===================== PWA ===================== */
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js");
 }
