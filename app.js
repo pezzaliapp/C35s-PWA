@@ -1,7 +1,6 @@
-/* app.js — v5.0 stable
+/* app.js — v5.2
  * CASCOS PWA: ricerca + autofill + verifiche + viewer 3D (fit-to-view, HiDPI, bracci specchiati)
  */
-
 "use strict";
 
 /* ===================== MODEL (default) ===================== */
@@ -19,36 +18,41 @@ const MODEL = {
 
 /* ===================== DATASET ===================== */
 let LIFTS = [];
+const DATA_URLS = [
+  "./data/CASCOS_LIFTS.json", // preferito
+  "./CASCOS_LIFTS.json"       // fallback
+];
 
 async function loadLifts() {
   const infoBox = document.getElementById("liftInfo");
-  const tryFetch = async (url) => {
-    const r = await fetch(url, { cache: "reload" });
-    if (!r.ok) throw new Error(`HTTP ${r.status} @ ${url}`);
-    const txt = await r.text();
-    if (txt.trim().startsWith("<")) throw new Error(`Non-JSON @ ${url}`);
-    return JSON.parse(txt);
-  };
 
-  try {
-    LIFTS = await tryFetch("./data/CASCOS_LIFTS.json");
-    infoBox && (infoBox.textContent = "✅ Dataset CASCOS caricato.");
-  } catch (e1) {
-    try {
-      LIFTS = await tryFetch("./CASCOS_LIFTS.json");
-      infoBox && (infoBox.textContent = "ℹ️ Dataset caricato (fallback).");
-    } catch (e2) {
-      console.warn("Dataset non disponibile:", e1, e2);
-      infoBox && (infoBox.textContent = "⚠️ Dataset non trovato: uso dati di prova.");
-      LIFTS = [
-        { modello:"C3.5", codice:"TEST", categoria:"Prova",
-          portata_kg:3500, basamento:"Senza basamento",
-          interasse_mm:2700, larghezza_totale_mm:3350, base_depth_mm:620,
-          under_beam_mm:4248, arm_min_mm:690, arm_max_mm:1325
-        }
-      ];
-    }
+  async function tryFetch(url) {
+    const res = await fetch(`${url}?v=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status} @ ${url}`);
+    const text = await res.text();
+    if (text.trim().startsWith("<")) throw new Error(`Non-JSON @ ${url}`);
+    return JSON.parse(text);
   }
+
+  let lastErr;
+  for (const url of DATA_URLS) {
+    try {
+      const data = await tryFetch(url);
+      if (!Array.isArray(data)) throw new Error("Root non-array");
+      LIFTS = data;
+      populateLiftSelect(LIFTS);
+      infoBox && (infoBox.textContent = `✅ Dataset caricato: ${url.replace(/\?.*$/,"")}`);
+      return;
+    } catch (e) { lastErr = e; }
+  }
+  console.warn("Dataset non disponibile", lastErr);
+  infoBox && (infoBox.textContent = "⚠️ CASCOS_LIFTS.json non trovato. Uso dati di prova.");
+  LIFTS = [{
+    modello: "C3.5", codice: "TEST", categoria: "Prova",
+    portata_kg: 3500, basamento: "Senza basamento",
+    interasse_mm: 2700, larghezza_totale_mm: 3350, base_profondita_mm: 620,
+    altezza_sotto_traversa_mm: 4248, arm_min_mm: 690, arm_max_mm: 1325
+  }];
   populateLiftSelect(LIFTS);
 }
 
@@ -163,10 +167,10 @@ function applyLiftToChecks(idx) {
   if (des) des.value = Math.min(num(r.altezza_max_mm, MODEL.liftHmax), MODEL.liftHmax);
 
   // Geometrie
-  MODEL.interasse  = num(r.interasse ?? r.interasse_mm ?? r.interasse_colonne_mm, MODEL.interasse);
-  MODEL.widthTotal = num(r.larghezza_totale ?? r.width_total_mm ?? r.larghezza_totale_mm, MODEL.widthTotal);
-  MODEL.baseDepth  = num(r.base_profondita ?? r.base_mm ?? r.base_depth_mm, MODEL.baseDepth);
-  MODEL.underBeam  = num(r.altezza_sotto_traversa ?? r.under_beam_mm ?? r.h_sotto_traversa_mm, MODEL.underBeam);
+  MODEL.interasse  = num(r.interasse_mm ?? r.interasse ?? r.interasse_colonne_mm, MODEL.interasse);
+  MODEL.widthTotal = num(r.larghezza_totale_mm ?? r.larghezza_totale ?? r.width_total_mm, MODEL.widthTotal);
+  MODEL.baseDepth  = num(r.base_profondita_mm ?? r.base_profondita ?? r.base_depth_mm, MODEL.baseDepth);
+  MODEL.underBeam  = num(r.altezza_sotto_traversa_mm ?? r.altezza_sotto_traversa ?? r.under_beam_mm, MODEL.underBeam);
 
   // Range bracci
   const { min, max } = getArmRangeForLift(r);
@@ -174,7 +178,8 @@ function applyLiftToChecks(idx) {
 
   // Info
   const info = document.getElementById("liftInfo");
-  if (info) info.textContent = `Applicato modello: ${r.modello ?? "—"} (${r.codice ?? "—"}) — portata impostata: ${MODEL.capacityKg} kg`;
+  if (info) info.textContent =
+    `Applicato modello: ${r.modello ?? "—"} (${r.codice ?? "—"}) — portata impostata: ${MODEL.capacityKg} kg`;
 
   render3D();
   runChecks();
@@ -295,7 +300,8 @@ function render3D() {
     P({x:-halfInter,      y:colH,     z:0})
   ];
   X.fillStyle="#2563eb"; X.strokeStyle="#0b1022";
-  X.beginPath(); tr.forEach((p,i)=> i?X.lineTo(p.x,p.y):X.moveTo(p.x,p.y)); X.closePath(); X.fill(); X.stroke();
+  X.beginPath(); tr.forEach((p,i)=> i?X.lineTo(p.x,p.y):X.moveTo(p.x,p,y)); // typo fix
+  X.closePath(); X.fill(); X.stroke();
 
   // Basamenti
   const drawBase=(x,y,z,w_,h_,d_,col_)=>{
@@ -306,7 +312,7 @@ function render3D() {
   drawBase(-halfInter - colW, 0, 0, colW, 20, baseD, "#0f1733");
   drawBase( halfInter,        0, 0, colW, 20, baseD, "#0f1733");
 
-  // Bracci (pivot interni)
+  // Bracci (pivot interni, specchiati)
   const pivotY = 200 + H, pivotZ = baseD/2;
   function drawArm(pivotX, sign, isRight){
     const baseAngle = isRight ? Math.PI : 0; // dx verso interno
@@ -355,7 +361,6 @@ function initUIBindings() {
     if(el){ el.addEventListener("input",render3D); el.addEventListener("change",render3D); }
   });
   window.addEventListener("resize", render3D);
-
   requestAnimationFrame(render3D);
 }
 
