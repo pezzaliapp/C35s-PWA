@@ -1,5 +1,6 @@
-/* app.js — v4.7
- * CASCOS PWA: ricerca+autofill + verifiche + viewer 3D (fit-to-view, ombre, riflessi, bracci specchiati)
+/* app.js — v4.7.1
+ * fix: optional chaining in assegnazione → rimosso
+ * plus: alias campi JSON (…_mm), bracci & viewer invariati
  */
 
 "use strict";
@@ -127,7 +128,8 @@ function applyLiftToChecks(idx) {
   const inferred = inferCapacityFromModel(r.modello);
   const cap = num(r.portata_kg, inferred ?? MODEL.capacityKg);
   MODEL.capacityKg = cap;
-  document.getElementById("cap")?.textContent = cap;
+  const capEl = document.getElementById("cap");   // ✅ niente optional chaining in assegnazione
+  if (capEl) capEl.textContent = cap;
 
   // 2) Variante installazione
   const variant = document.getElementById("variant");
@@ -144,18 +146,19 @@ function applyLiftToChecks(idx) {
   const des = document.getElementById("desiredLift");
   if (r.altezza_max_mm && des) des.value = Math.min(num(r.altezza_max_mm, MODEL.liftHmax), MODEL.liftHmax);
 
-  // 4) Geometrie (se presenti)
-  MODEL.interasse   = num(r.interasse ?? r.interasse_colonne_mm, MODEL.interasse);
-  MODEL.widthTotal  = num(r.larghezza_totale ?? r.larghezza_totale_mm, MODEL.widthTotal);
-  MODEL.baseDepth   = num(r.base_profondita, MODEL.baseDepth);
-  MODEL.underBeam   = num(r.altezza_sotto_traversa, MODEL.underBeam);
+  // 4) Geometrie (accetta alias …_mm)
+  MODEL.interasse  = num(r.interasse ?? r.interasse_mm ?? r.interasse_colonne_mm, MODEL.interasse);
+  MODEL.widthTotal = num(r.larghezza_totale ?? r.width_total_mm ?? r.larghezza_totale_mm, MODEL.widthTotal);
+  MODEL.baseDepth  = num(r.base_profondita ?? r.base_depth_mm, MODEL.baseDepth);
+  MODEL.underBeam  = num(r.altezza_sotto_traversa ?? r.under_beam_mm, MODEL.underBeam);
 
   // 5) Range bracci dinamico
   const { min, max } = getArmRangeForLift(r);
   setArmSlider(min, max, true);
 
   // 6) Info
-  document.getElementById("liftInfo").textContent =
+  const info = document.getElementById("liftInfo");
+  if (info) info.textContent =
     `Applicato modello: ${r.modello ?? "—"} (${r.codice ?? "null"}) — portata impostata: ${MODEL.capacityKg} kg`;
 
   // 7) Aggiorna subito UI
@@ -267,7 +270,7 @@ function render3D() {
   const baseD = MODEL.baseDepth;
   const colH = 4250;
 
-  // Fit-to-view dinamico (usa misure reali)
+  // Fit-to-view dinamico
   const w = C.clientWidth || 380;
   const h = C.clientHeight || 360;
   const Wspan = (MODEL.widthTotal || 3350) * 1.28;
@@ -298,7 +301,7 @@ function render3D() {
   X.fillStyle = floorGrad;
   X.fillRect(0, h * 0.55, w, h * 0.45);
 
-  // Colonne
+  // Colonne con riflesso
   const halfInter = inter / 2;
   const colBases = [
     { x: -halfInter - colW, color: "#3b82f6" },
@@ -314,7 +317,6 @@ function render3D() {
     X.strokeStyle = "#0b1022";
     X.beginPath(); front.forEach((pt,i)=> i?X.lineTo(pt.x,pt.y):X.moveTo(pt.x,pt.y)); X.closePath(); X.fill(); X.stroke();
 
-    // piccolo riflesso verticale
     X.save();
     X.globalAlpha = 0.20;
     const mid = (front[0].x + front[1].x) / 2;
@@ -343,8 +345,7 @@ function render3D() {
   const pivotZ = baseD / 2;
 
   function drawArm(pivotX, sign, isRight){
-    // direzione base verso l’interno: dx = π, sx = 0
-    const baseAngle = isRight ? Math.PI : 0;
+    const baseAngle = isRight ? Math.PI : 0; // verso interno
     const angle = baseAngle + sign * A;
 
     const x1 = pivotX, y1 = pivotY, z1 = pivotZ;
@@ -358,18 +359,16 @@ function render3D() {
     X.lineWidth = 5;
     X.beginPath(); X.moveTo(a.x,a.y); X.lineTo(b.x,b.y); X.stroke();
 
-    // tampone verde (sempre interno)
     X.fillStyle = "#22c55e";
     X.beginPath(); X.arc(b.x,b.y,6,0,Math.PI*2); X.fill();
 
-    // ombra al suolo
     const g = P({x:x2,y:0,z:z2});
     X.save(); X.globalAlpha = 0.22; X.fillStyle = "#000";
     X.beginPath(); X.ellipse(g.x,g.y,12,4,0,0,Math.PI*2); X.fill();
     X.restore();
   }
 
-  // pivot interni: SX = -halfInter, DX = +halfInter (⚠️ NON +colW)
+  // pivot: SX = -halfInter, DX = +halfInter
   drawArm(-halfInter, +1, false);
   drawArm(-halfInter, -1, false);
   drawArm(+halfInter, +1, true);
@@ -397,7 +396,7 @@ function initUIBindings() {
   if (!C.hasAttribute("height")) C.setAttribute("height", "360");
   X = C.getContext("2d");
 
-  // range default (se ancora non applicato un modello)
+  // range default (se non è ancora stato applicato un modello)
   setArmSlider(MODEL.armReachMin, MODEL.armReachMax, false);
 
   ["hLift","armLen","armRot","viewMode"].forEach(id=>{
