@@ -1,7 +1,15 @@
-/* app.js — v5.3
- * CASCOS PWA: ricerca + autofill + verifiche + viewer 3D (fit-to-view, HiDPI, bracci specchiati)
+/* app.js — v5.8 stable (CASCOS)
+ * - Carica ./data/CASCOS_LIFTS.json (schema con *_mm come da tuo file)
+ * - Ricerca + autocompilazione verifiche
+ * - Viewer 3D (fit-to-view, HiDPI, bracci specchiati verso interno)
+ * - Diagnostica a schermo se qualcosa non va
  */
 "use strict";
+
+/* ===================== Diagnostica a schermo ===================== */
+function logInfo(msg){ const box=document.getElementById("liftInfo"); if(box){ box.textContent=(box.textContent?box.textContent+"\n":"")+`ℹ️ ${msg}`; } console.log(msg); }
+function logErr(msg){  const box=document.getElementById("liftInfo"); if(box){ box.textContent=(box.textContent?box.textContent+"\n":"")+`⛔ ${msg}`; } console.error(msg); }
+window.addEventListener("error", e => logErr(`JS: ${e.message}`));
 
 /* ===================== MODEL (default) ===================== */
 const MODEL = {
@@ -18,45 +26,32 @@ const MODEL = {
 
 /* ===================== DATASET ===================== */
 let LIFTS = [];
-const DATA_URLS = [
-  "./data/CASCOS_LIFTS.json", // preferito
-  "./CASCOS_LIFTS.json"       // fallback (root)
-];
+const DATA_URL = "./data/CASCOS_LIFTS.json"; // nome esatto richiesto
 
 async function loadLifts() {
-  const infoBox = document.getElementById("liftInfo");
-
-  async function tryFetch(url) {
-    const res = await fetch(`${url}?v=${Date.now()}`, { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status} @ ${url}`);
+  try {
+    const res = await fetch(`${DATA_URL}?v=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const text = await res.text();
-    if (text.trim().startsWith("<")) throw new Error(`Non-JSON @ ${url}`);
+    if (text.trim().startsWith("<")) throw new Error("File non-JSON (forse 404 HTML)");
     const data = JSON.parse(text);
-    if (!Array.isArray(data)) throw new Error("Root non-array");
-    return data;
+    if (!Array.isArray(data)) throw new Error("Root JSON non è un array");
+    LIFTS = data;
+    populateLiftSelect(LIFTS);
+    logInfo(`✅ Dataset caricato: ${DATA_URL}`);
+  } catch (e) {
+    logErr(`Impossibile caricare ${DATA_URL}: ${e.message}`);
+    // fallback minimale per non bloccare la UI
+    LIFTS = [{
+      modello:"C3.5", codice:"FALLBACK", categoria:"Con basamento",
+      portata_kg:3500, interasse_mm:2700, larghezza_totale_mm:3350,
+      altezza_sotto_traversa_mm:4248, base_profondita_mm:620,
+      arm_min_mm:690, arm_max_mm:1325, basamento:"con"
+    }];
+    populateLiftSelect(LIFTS);
   }
-
-  let lastErr;
-  for (const url of DATA_URLS) {
-    try {
-      LIFTS = await tryFetch(url);
-      populateLiftSelect(LIFTS);
-      infoBox && (infoBox.textContent = `✅ Dataset caricato: ${url.replace(/\?.*$/,"")}`);
-      return;
-    } catch (e) { lastErr = e; }
-  }
-  console.warn("Dataset non disponibile", lastErr);
-  infoBox && (infoBox.textContent = "⚠️ CASCOS_LIFTS.json non trovato. Uso dati di prova.");
-  LIFTS = [{
-    modello: "C3.5", codice: "TEST", categoria: "Prova",
-    portata_kg: 3500, basamento: "senza",
-    interasse_mm: 2700, larghezza_totale_mm: 3350, base_profondita_mm: 620,
-    altezza_sotto_traversa_mm: 4248, arm_min_mm: 690, arm_max_mm: 1325
-  }];
-  populateLiftSelect(LIFTS);
 }
 
-/* ===================== LISTA / FILTRO ===================== */
 function populateLiftSelect(list) {
   const sel = document.getElementById("liftSelect");
   if (!sel) return;
@@ -91,55 +86,28 @@ function showLiftInfo(idx) {
     `Modello: ${r.modello ?? "—"} (codice: ${r.codice ?? "—"})`,
     `Categoria: ${r.categoria ?? "—"} — Basamento: ${r.basamento ?? "—"}`,
     `Portata: ${r.portata_kg ?? "—"} kg`,
+    `Interasse: ${r.interasse_mm ?? "—"} mm — Larghezza totale: ${r.larghezza_totale_mm ?? "—"} mm`,
+    `H sotto traversa: ${r.altezza_sotto_traversa_mm ?? "—"} mm — Base: ${r.base_profondita_mm ?? "—"} mm`,
+    `Bracci: ${r.arm_min_mm ?? "—"}–${r.arm_max_mm ?? "—"} mm`,
     `Versione: ${r.versione ?? "—"}`,
     `Note: ${r.note_tecniche ?? "—"}`,
     `Fonte: ${r.pdf_source ?? "—"}`
   ].join("\n");
 }
 
-/* ===================== Helper numerici & portate ===================== */
+/* ===================== Helpers ===================== */
 const num = (v, fb) => {
   const n = Number(String(v ?? "").replace(",", "."));
-  return Number.isFinite(n) && n > 0 ? n : fb;
+  return Number.isFinite(n) ? n : fb;
 };
 
-const CAPACITY_MAP = [
-  { re: /C7(\D|$)/i,     kg: 7000 },
-  { re: /C5\.5(\D|$)/i,  kg: 5500 },
-  { re: /C5(\D|$)/i,     kg: 5000 },
-  { re: /C4(\D|$)/i,     kg: 4000 },
-  { re: /C3\.5(\D|$)/i,  kg: 3500 },
-  { re: /C3\.2(\D|$)/i,  kg: 3200 },
-  { re: /C3(\D|$)/i,     kg: 3000 },
-  { re: /C2(\D|$)/i,     kg: 2000 }
-];
-
-function capacityFromModelName(name = "", fallback = MODEL.capacityKg) {
-  const m = String(name || "");
-  for (const { re, kg } of CAPACITY_MAP) if (re.test(m)) return kg;
-  return fallback;
-}
-
-function getArmRangeForLift(rec) {
-  const pick = (o, keys) => {
-    for (const k of keys) {
-      const v = num(o?.[k], NaN);
-      if (Number.isFinite(v)) return v;
-    }
-    return null;
-  };
-  const min = pick(rec, ["arm_min_mm","braccio_min_mm","bracci_min_mm","est_min_mm"]) ?? MODEL.armReachMin;
-  const max = pick(rec, ["arm_max_mm","braccio_max_mm","bracci_max_mm","est_max_mm"]) ?? MODEL.armReachMax;
-  return (min < max) ? { min, max } : { min: MODEL.armReachMin, max: MODEL.armReachMax };
-}
-
-function setArmSlider(min, max, keepCurrent = true) {
+function setArmSlider(min, max, keep=true){
   const s = document.getElementById("armLen");
-  if (!s) return;
+  if(!s) return;
   const prev = num(s.value, min);
   s.min = String(min);
   s.max = String(max);
-  s.value = String(keepCurrent ? Math.min(Math.max(prev, min), max) : min);
+  s.value = String(keep ? Math.min(Math.max(prev, min), max) : min);
   s.title = `Estensione bracci: ${s.value} mm (min ${min} – max ${max})`;
 }
 
@@ -150,10 +118,15 @@ function applyLiftToChecks(idx) {
   const r = list[idx] || LIFTS[idx];
   if (!r) return;
 
-  // Portata: JSON → dedotta → default
-  const cap = num(r.portata_kg, capacityFromModelName(r.modello, MODEL.capacityKg));
-  MODEL.capacityKg = cap;
-  document.getElementById("cap")?.textContent = cap;
+  // Portata: prendi SOLO dal JSON (niente inferenze automatiche)
+  MODEL.capacityKg = num(r.portata_kg, MODEL.capacityKg);
+  const cap = document.getElementById("cap"); if (cap) cap.textContent = MODEL.capacityKg;
+
+  // Geometrie: usa i campi *_mm che hai definito nel JSON
+  MODEL.interasse  = num(r.interasse_mm, MODEL.interasse);
+  MODEL.widthTotal = num(r.larghezza_totale_mm, MODEL.widthTotal);
+  MODEL.baseDepth  = num(r.base_profondita_mm, MODEL.baseDepth);
+  MODEL.underBeam  = num(r.altezza_sotto_traversa_mm, MODEL.underBeam);
 
   // Variante installazione
   const variant = document.getElementById("variant");
@@ -162,26 +135,20 @@ function applyLiftToChecks(idx) {
     variant.value = b.includes("senza") ? "Senza basamento" : "Con basamento (trave/platea)";
   }
 
-  // Quote min/max altezze
+  // Limiti altezze (se non presenti in JSON, lascio i default)
   const clear = document.getElementById("clearance");
   if (clear) clear.value = num(r.altezza_min_mm, MODEL.liftHmin);
   const des = document.getElementById("desiredLift");
   if (des) des.value = Math.min(num(r.altezza_max_mm, MODEL.liftHmax), MODEL.liftHmax);
 
-  // Geometrie (preferisci *_mm; fallback su varianti chiave)
-  MODEL.interasse  = num(r.interasse_mm ?? r.interasse ?? r.interasse_colonne_mm, MODEL.interasse);
-  MODEL.widthTotal = num(r.larghezza_totale_mm ?? r.larghezza_totale ?? r.width_total_mm, MODEL.widthTotal);
-  MODEL.baseDepth  = num(r.base_profondita_mm ?? r.base_profondita ?? r.base_depth_mm, MODEL.baseDepth);
-  MODEL.underBeam  = num(r.altezza_sotto_traversa_mm ?? r.altezza_sotto_traversa ?? r.under_beam_mm, MODEL.underBeam);
-
-  // Range bracci
-  const { min, max } = getArmRangeForLift(r);
-  setArmSlider(min, max, true);
+  // Range bracci dinamico
+  MODEL.armReachMin = num(r.arm_min_mm, MODEL.armReachMin);
+  MODEL.armReachMax = num(r.arm_max_mm, MODEL.armReachMax);
+  setArmSlider(MODEL.armReachMin, MODEL.armReachMax, true);
 
   // Info
   const info = document.getElementById("liftInfo");
-  if (info) info.textContent =
-    `Applicato modello: ${r.modello ?? "—"} (${r.codice ?? "—"}) — portata impostata: ${MODEL.capacityKg} kg`;
+  if (info) info.textContent = `Applicato: ${r.modello ?? "—"} — Portata: ${MODEL.capacityKg} kg — Bracci ${MODEL.armReachMin}–${MODEL.armReachMax} mm`;
 
   render3D();
   runChecks();
@@ -213,7 +180,8 @@ function runChecks() {
     ? `✅ Pavimento OK per "${variant}" (≥ ${slabMin} mm)`
     : `⚠️ Pavimento sottile (${slab} mm): valuta plinti/platea.`);
 
-  document.getElementById("out").textContent = out.join("\n");
+  const box = document.getElementById("out");
+  if (box) box.textContent = out.join("\n");
 }
 
 /* ===================== Viewer 3D ===================== */
@@ -223,14 +191,13 @@ function setupCanvas() {
   if (!C || !X) return;
   const dpr = Math.max(1, window.devicePixelRatio || 1);
   const rect = C.getBoundingClientRect();
-  const cssW = Math.max(320, Math.floor(rect.width));
-  const cssH = Math.max(220, Math.floor(rect.height));
+  const cssW = Math.max(320, Math.floor(rect.width || C.clientWidth || 720));
+  const cssH = Math.max(220, Math.floor(rect.height || C.clientHeight || 360));
   const needW = Math.round(cssW * dpr);
   const needH = Math.round(cssH * dpr);
   if (C.width !== needW || C.height !== needH) {
-    C.width = needW;
-    C.height = needH;
-    X.setTransform(dpr, 0, 0, dpr, 0, 0); // disegno in px CSS
+    C.width = needW; C.height = needH;
+    X.setTransform(dpr, 0, 0, dpr, 0, 0); // coord in px CSS
   }
 }
 
@@ -290,11 +257,12 @@ function render3D() {
     g.addColorStop(0,"#1d4ed8"); g.addColorStop(0.45,c.color); g.addColorStop(1,"#60a5fa");
     X.fillStyle=g; X.strokeStyle="#0b1022";
     X.beginPath(); f.forEach((p,i)=> i?X.lineTo(p.x,p.y):X.moveTo(p.x,p.y)); X.closePath(); X.fill(); X.stroke();
+    // riflesso centrale
     X.save(); X.globalAlpha=0.2; const mid=(f[0].x+f[1].x)/2; X.fillStyle="#fff";
     X.fillRect(mid-2, f[0].y+12, 4, (f[2].y-f[1].y)-24); X.restore();
   });
 
-  // Trave (fix typo moveTo)
+  // Trave
   const tr = [
     P({x:-halfInter,      y:colH-120, z:0}),
     P({x: halfInter+colW, y:colH-120, z:0}),
@@ -302,10 +270,9 @@ function render3D() {
     P({x:-halfInter,      y:colH,     z:0})
   ];
   X.fillStyle="#2563eb"; X.strokeStyle="#0b1022";
-  X.beginPath(); tr.forEach((p,i)=> i?X.lineTo(p.x,p.y):X.moveTo(p.x,p.y)); 
-  X.closePath(); X.fill(); X.stroke();
+  X.beginPath(); tr.forEach((p,i)=> i?X.lineTo(p.x,p.y):X.moveTo(p.x,p.y)); X.closePath(); X.fill(); X.stroke();
 
-  // Basamenti
+  // Basamenti (front)
   const drawBase=(x,y,z,w_,h_,d_,col_)=>{
     const pts=[{x,y,z},{x:x+w_,y,z},{x:x+w_,y:y+h_,z},{x,y:y+h_,z}].map(P);
     X.fillStyle=col_; X.strokeStyle="#0b1022";
@@ -314,10 +281,10 @@ function render3D() {
   drawBase(-halfInter - colW, 0, 0, colW, 20, baseD, "#0f1733");
   drawBase( halfInter,        0, 0, colW, 20, baseD, "#0f1733");
 
-  // Bracci (pivot interni, specchiati)
+  // Bracci (pivot interni, specchiati verso interno)
   const pivotY = 200 + H, pivotZ = baseD/2;
   function drawArm(pivotX, sign, isRight){
-    const baseAngle = isRight ? Math.PI : 0; // dx verso interno
+    const baseAngle = isRight ? Math.PI : 0; // destra punta verso sinistra
     const angle = baseAngle + sign * A;
     const x1=pivotX, y1=pivotY, z1=pivotZ;
     const x2=x1 + Math.cos(angle)*L;
@@ -325,7 +292,9 @@ function render3D() {
     const a=P({x:x1,y:y1,z:z1}), b=P({x:x2,y:y1,z:z2});
     X.strokeStyle="#a78bfa"; X.lineWidth=5;
     X.beginPath(); X.moveTo(a.x,a.y); X.lineTo(b.x,b.y); X.stroke();
+    // tampone sempre lato interno
     X.fillStyle="#22c55e"; X.beginPath(); X.arc(b.x,b.y,6,0,Math.PI*2); X.fill();
+    // ombra
     const g=P({x:x2,y:0,z:z2});
     X.save(); X.globalAlpha=0.22; X.fillStyle="#000";
     X.beginPath(); X.ellipse(g.x,g.y,12,4,0,0,Math.PI*2); X.fill(); X.restore();
@@ -338,8 +307,10 @@ function render3D() {
 
 /* ===================== INIT ===================== */
 function initUIBindings() {
+  // Verifiche
   document.getElementById("runChecks")?.addEventListener("click", runChecks);
 
+  // Ricerca / selezione / applica
   const liftSearch = document.getElementById("liftSearch");
   const liftSelect = document.getElementById("liftSelect");
   if (liftSearch && liftSelect) {
@@ -348,21 +319,27 @@ function initUIBindings() {
     document.getElementById("showLift")?.addEventListener("click", () => showLiftInfo(liftSelect.selectedIndex));
     document.getElementById("applyLift")?.addEventListener("click", () => applyLiftToChecks(liftSelect.selectedIndex));
     loadLifts();
+  } else {
+    logErr("Elementi ricerca/selezione non trovati nel DOM.");
   }
 
+  // Viewer 3D
   C = document.getElementById("iso3d");
-  if (!C) return;
+  if (!C) { logErr("Canvas #iso3d non trovato"); return; }
   if (!C.hasAttribute("width"))  C.setAttribute("width","720");
   if (!C.hasAttribute("height")) C.setAttribute("height","360");
   X = C.getContext("2d");
 
+  // Slider bracci default
   setArmSlider(MODEL.armReachMin, MODEL.armReachMax, false);
 
+  // Re-render su input
   ["hLift","armLen","armRot","viewMode"].forEach(id=>{
     const el=document.getElementById(id);
     if(el){ el.addEventListener("input",render3D); el.addEventListener("change",render3D); }
   });
   window.addEventListener("resize", render3D);
+
   requestAnimationFrame(render3D);
 }
 
@@ -374,5 +351,5 @@ if (document.readyState === "loading") {
 
 /* ===================== PWA ===================== */
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("./sw.js");
+  navigator.serviceWorker.register("./sw.js").catch(e=>logErr(`SW: ${e.message}`));
 }
